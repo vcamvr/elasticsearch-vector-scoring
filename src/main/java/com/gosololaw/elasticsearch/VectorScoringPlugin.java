@@ -45,7 +45,9 @@ public final class VectorScoringPlugin extends Plugin implements ScriptPlugin {
         return new VectorScoreEngine();
     }
 
-    /** An example {@link ScriptEngine} that uses Lucene segment details to implement pure document frequency scoring. */
+    /**
+     * An example {@link ScriptEngine} that uses Lucene segment details to implement pure document frequency scoring.
+     */
     // tag::expert_engine
     private static class VectorScoreEngine implements ScriptEngine {
 
@@ -64,7 +66,9 @@ public final class VectorScoringPlugin extends Plugin implements ScriptPlugin {
             if ("vector_scoring".equals(scriptSource)) {
                 SearchScript.Factory factory = (p, lookup) -> new SearchScript.LeafFactory() {
                     private final double[] inputVector;
+                    private final double magnitude;
                     final String field;
+
                     {
                         final Object field = p.get("vector_field");
                         if (field == null)
@@ -77,6 +81,14 @@ public final class VectorScoringPlugin extends Plugin implements ScriptPlugin {
                         for (int i = 0; i < inputVector.length; i++) {
                             inputVector[i] = tmp.get(i);
                         }
+
+                        // calc magnitude
+                        double queryVectorNorm = 0;
+                        // compute query inputVector norm once
+                        for (double v : inputVector) {
+                            queryVectorNorm += v * v;
+                        }
+                        magnitude = Math.sqrt(queryVectorNorm);
                     }
 
                     @Override
@@ -101,9 +113,9 @@ public final class VectorScoringPlugin extends Plugin implements ScriptPlugin {
                                 if (!is_value) return 0;
                                 final byte[] bytes;
                                 try {
-                                     bytes = accessor.binaryValue().bytes;
+                                    bytes = accessor.binaryValue().bytes;
                                 } catch (IOException e) {
-                                     return 0;
+                                    return 0;
                                 }
 
                                 final int input_vector_size = inputVector.length;
@@ -111,7 +123,7 @@ public final class VectorScoringPlugin extends Plugin implements ScriptPlugin {
                                 final ByteArrayDataInput doc_vector = new ByteArrayDataInput(bytes);
                                 doc_vector.readVInt(); // returns the number of values which should be 1, MUST appear hear since it affect the next calls
                                 final int doc_vector_length = doc_vector.readVInt(); // returns the number of bytes to read
-                                if(doc_vector_length != input_vector_size * DOUBLE_SIZE) {
+                                if (doc_vector_length != input_vector_size * DOUBLE_SIZE) {
                                     return 0.0;
                                 }
                                 final int position = doc_vector.getPosition();
@@ -121,10 +133,16 @@ public final class VectorScoringPlugin extends Plugin implements ScriptPlugin {
                                 doubleBuffer.get(docVector);
 
                                 double score = 0;
+                                double docVectorNorm = 0;
                                 for (int i = 0; i < input_vector_size; i++) {
+                                    docVectorNorm += docVector[i] * docVector[i];
                                     score += docVector[i] * inputVector[i];
                                 }
-                                return score;
+                                if (docVectorNorm == 0 || magnitude == 0) {
+                                    return 0d;
+                                } else {
+                                    return score / (Math.sqrt(docVectorNorm) * magnitude);
+                                }
                             }
                         };
                     }
